@@ -53,32 +53,33 @@ init =
 
 -- UPDATE
 
-type Msg = ChangeTopic
+type Msg =
+  ChangeTopic String
 
 update msg model =
   case msg of
-    ChangeTopic ->
-      {model | activeTopic = "testing" }
+    ChangeTopic newtopic ->
+      {model | activeTopic = newtopic }
 
 
 -- VIEW
 
-topicPanel : List String -> String -> Element msg
+topicPanel : List String -> String -> Element Msg
 topicPanel topics activeTopic =
     let
         activeTopicAttrs =
             [ Background.color <| rgb255 117 179 201, Font.bold ]
 
-        topicAttrs =
-            [ paddingXY 15 5, width fill ]
+        topicAttrs topic =
+            [ paddingXY 15 5, onClick (ChangeTopic topic), width fill ]
 
         topicEl topic =
             el
                 (if topic == activeTopic then
-                    activeTopicAttrs ++ topicAttrs
+                    activeTopicAttrs ++ (topicAttrs topic)
 
                  else
-                    topicAttrs
+                    topicAttrs topic
                 )
             <|         
                 text ("- " ++ topic)
