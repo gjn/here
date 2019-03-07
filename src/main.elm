@@ -10,9 +10,11 @@ import Element.Font as Font
 import Element.Input as Input
 
 import Html exposing (Html)
+import Http
+import Json.Decode  exposing (Decoder, index, field, string, float)
 
 main =
-    Browser.sandbox { init = init, update = update, view = view }
+    Browser.element { init = init, update = update, view = view, subscriptions = subscriptions }
 
 
 -- DEFINITIONS
@@ -20,8 +22,23 @@ main =
 type alias Information =
   { topic : String, layer : String, pre : String, post : String, value : String }
 
+type alias TAddress =
+  { label : String, x : Float, y : Float }
+
+type alias TIdentify =
+  { label: String, distance : Float }
+
+type Response
+  = Address TAddress
+  | Identify TIdentify
 
 -- MODEL
+
+type HttpRequestState
+  = Idle
+  | Loading
+  | Failure
+  | Success Response
 
 type alias Model =
   {
@@ -29,49 +46,96 @@ type alias Model =
   , activeTopic : String
   , informations : List Information
   , searchString : String
+  , searchState : HttpRequestState
   }
 
 
-init : Model
-init = 
-  {
+init : () -> (Model, Cmd Msg)
+init _ = 
+  ({
     topics =
-      [ "Generell"
-      , "Verkehr"
+      [ "Verkehr"
       , "Energie"
       , "Gefahr"
       , "Natur"
       , "Interessantes"
       , "Besitz"
       ]
-  , activeTopic = "Generell"
+  , activeTopic = "Verkehr"
   , informations =
-      [ { topic = "Generell", layer = "ch.swisstopo.bogus", pre = "Ihr Standort ist ", post = " vom naechsten entfernt", value = "5 km" }
-      , { topic = "Generell", layer = "ch.swisstopo.bogus", pre = "Ihr Standort ist ", post = " vom naechsten entfernt", value = "5 km" }
-      , { topic = "Generell", layer = "ch.swisstopo.bogus", pre = "Ihr Standort ist ", post = " vom naechsten entfernt", value = "5 km" }
+      [ { topic = "Verkehr", layer = "ch.swisstopo.bogus", pre = "Ihr Standort ist ", post = " vom naechsten entfernt", value = "5 km" }
+      , { topic = "Verkehr", layer = "ch.swisstopo.bogus", pre = "Ihr Standort ist ", post = " vom naechsten entfernt", value = "5 km" }
+      , { topic = "Verkehr", layer = "ch.swisstopo.bogus", pre = "Ihr Standort ist ", post = " vom naechsten entfernt", value = "5 km" }
       ]
   , searchString = ""
+  , searchState = Idle
   }
+  , Cmd.none)
 
 -- UPDATE
 
-search: Model -> String -> Model
-search model string =
-  {model | searchString = string}
+getStateText : HttpRequestState -> String
+getStateText state =
+  case state of
+    Idle ->
+      ""
 
+    Loading ->
+      "Loading..."
+
+    Failure ->
+      "Address search didn't find any results or failed"
+
+    Success resp ->
+      case resp of
+        Address address ->
+          (address.label ++ " " ++ String.fromFloat address.x ++ "/" ++ String.fromFloat address.y)
+
+        Identify ident ->
+          ""
+
+addressDecoder : Decoder TAddress
+addressDecoder =
+  Json.Decode.map3 TAddress
+    (field "results" (index 0 (field "attrs" (field "label" string))))
+    (field "results" (index 0 (field "attrs" (field "x" float))))
+    (field "results" (index 0 (field "attrs" (field "y" float))))
+
+getAddress : String -> Cmd Msg
+getAddress searchstring =
+  Http.get
+    { url =
+      "https://api3.geo.admin.ch/rest/services/all/SearchServer?sr=2056&searchText=" ++ searchstring ++ "&lang=de&type=locations"
+    , expect = Http.expectJson GotSearch addressDecoder
+    }
 
 type Msg =
   ChangeTopic String
   | UpdateSearch String
+  | GotSearch (Result Http.Error TAddress)
 
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
     ChangeTopic newtopic ->
-      {model | activeTopic = newtopic }
+      ({model | activeTopic = newtopic }, Cmd.none)
 
     UpdateSearch searchstring ->
-      search model searchstring
+      ({model | searchString = searchstring, searchState = Loading}, getAddress searchstring)
 
+    GotSearch result ->
+      case result of
+        Ok  resultJson ->
+          ({model | searchState = Success (Address resultJson)}, Cmd.none)
+
+        Err _ ->
+          ({model | searchState = Failure}, Cmd.none)
+
+-- SUBSCRIPTIONS
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+  Sub.none
 
 -- VIEW
 
@@ -107,8 +171,8 @@ topicPanel topics activeTopic =
         List.map topicEl topics
 
 
-mainPanel : String -> List Information -> String -> Element Msg
-mainPanel topic informations searchstring =
+mainPanel : Model -> Element Msg
+mainPanel model =
     let
         header =
             row
@@ -117,15 +181,15 @@ mainPanel topic informations searchstring =
                 , Border.widthEach { bottom = 1, top = 0, left = 0, right = 0 }
                 , Border.color <| rgb255 200 200 200
                 ]
-                [ el [ padding 5 ] <| text ("- " ++ topic)
+                [ el [ padding 5 ] <| text ("- " ++ model.activeTopic)
                 , Input.text
                   [
                     padding 5
                   ]
-                  { label = Input.labelHidden topic
+                  { label = Input.labelHidden model.activeTopic
                   , onChange = \new -> UpdateSearch new
                   , placeholder = Just (Input.placeholder [] (text "Geben Sie eine Adresse ein"))
-                  , text = searchstring
+                  , text = model.searchString
                   }
                 , Input.button
                     [ padding 5
@@ -148,11 +212,14 @@ mainPanel topic informations searchstring =
 
         informationPanel =
             column [ padding 10, spacingXY 0 20, scrollbarY ] <|
-                List.map informationEntry informations
+                List.map informationEntry model.informations
 
+        searchResultPanel =
+            el [ padding 5 ] <| text (getStateText model.searchState)
     in
     column [ height fill, width <| fillPortion 5 ]
         [ header
+        , searchResultPanel
         , informationPanel
         ]
 
@@ -161,6 +228,6 @@ view model =
     layout [ height fill ] <|
         row [ height fill, width fill ]
             [ topicPanel model.topics model.activeTopic
-            , mainPanel model.activeTopic model.informations model.searchString
+            , mainPanel model
             ]
 
